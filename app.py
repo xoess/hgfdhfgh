@@ -3,11 +3,10 @@ from telebot import types
 import os
 
 TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
+ADMIN_IDS = [7315281700]  # можно добавить второго админа
 
 bot = telebot.TeleBot(TOKEN)
 
-# --- цены ---
 prices = {
     "25": 35,
     "50": 75,
@@ -18,11 +17,11 @@ prices = {
 }
 
 # --- картинки ---
-IMG_WELCOME = "AgACAgIAAxkBAAFHfEJp414ILgFPZIHifeOyuZ91oeZisAACQBRrGwUTIEvx4itiwJkrVgEAAwIAA3MAAzsE"
-IMG_PROFILE = "AgACAgIAAxkBAAFHfEhp414mwl9xrct8OAe7IlWYYm765AACQhRrGwUTIEuE_EUM3sPNPQEAAwIAA20AAzsE"
-IMG_STARS = "AgACAgIAAxkBAAFHfExp4143555vDfUCWXuQYf6ivlH8qAACQxRrGwUTIEvn6IWhnnNfXgEAAwIAA3kAAzsE"
+IMG_WELCOME = "https://telegra.ph/file/7a0a1b9f5c7f6e4a8b9a1.jpg"
+IMG_PROFILE = "https://telegra.ph/file/3c2d4e5f6a7b8c9d0e1f2.jpg"
+IMG_STARS = "https://telegra.ph/file/5d6e7f8a9b0c1d2e3f4a5.jpg"
 
-# --- главное меню ---
+# --- меню ---
 def main_menu():
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
     kb.add("👤 Профиль", "⭐ Купить звезды")
@@ -35,24 +34,17 @@ def start(message):
     bot.send_photo(
         message.chat.id,
         IMG_WELCOME,
-        caption="👋 Добро пожаловать в AulShop!\nВыберите действие:",
+        caption="👋 Добро пожаловать!\nВыберите действие:",
         reply_markup=main_menu()
     )
 
 # --- профиль ---
 @bot.message_handler(func=lambda m: m.text == "👤 Профиль")
 def profile(message):
-    text = f"""
-👤 Ваш профиль:
-
-🆔 ID: {message.from_user.id}
-📛 Username: @{message.from_user.username if message.from_user.username else 'нет'}
-"""
-
     bot.send_photo(
         message.chat.id,
         IMG_PROFILE,
-        caption=text,
+        caption=f"👤 Профиль\n\nID: {message.from_user.id}\nUsername: @{message.from_user.username or 'нет'}",
         reply_markup=main_menu()
     )
 
@@ -73,80 +65,66 @@ def stars(message):
         reply_markup=kb
     )
 
-# --- обработка покупки ---
+# --- покупка ---
 @bot.message_handler(func=lambda m: "⭐" in m.text)
 def buy(message):
-    try:
-        amount = message.text.split("⭐")[0].strip()
-        price = prices.get(amount)
+    amount = message.text.split("⭐")[0].strip()
+    price = prices.get(amount)
 
-        if not price:
-            return
-
-        # кнопка оплаты
-        kb = types.InlineKeyboardMarkup()
-        kb.add(types.InlineKeyboardButton(
-            "💳 Оплатить (ЮMoney)",
-            url=f"https://yoomoney.ru/to/4100119516144115?amount={price}"
-        ))
-
-        bot.send_message(
-            message.chat.id,
-            f"💰 К оплате: {price} ₽\nВыберите способ:",
-            reply_markup=kb
-        )
-
-        # кнопка "я оплатил"
-        kb2 = types.InlineKeyboardMarkup()
-        kb2.add(types.InlineKeyboardButton(
-            "✅ Я оплатил",
-            callback_data=f"check_{amount}"
-        ))
-
-        bot.send_message(
-            message.chat.id,
-            "После оплаты нажмите кнопку:",
-            reply_markup=kb2
-        )
-
-    except:
-        bot.send_message(message.chat.id, "❌ Ошибка")
-
-# --- проверка оплаты ---
-@bot.callback_query_handler(func=lambda c: c.data.startswith("check_"))
-def check(call):
-    amount = call.data.split("_")[1]
+    if not price:
+        return
 
     kb = types.InlineKeyboardMarkup()
     kb.add(types.InlineKeyboardButton(
-        "✅ Подтвердить",
-        callback_data=f"confirm_{call.from_user.id}_{amount}"
+        "💳 Оплатить",
+        url=f"https://yoomoney.ru/to/4100119516144115?amount={price}"
     ))
 
     bot.send_message(
-        ADMIN_ID,
-        f"💰 Заявка на оплату\n\n👤 @{call.from_user.username}\n⭐ {amount}",
+        message.chat.id,
+        f"💰 К оплате: {price} ₽",
         reply_markup=kb
     )
 
-    bot.send_message(call.message.chat.id, "⏳ Ожидаем подтверждение...")
+    kb2 = types.InlineKeyboardMarkup()
+    kb2.add(types.InlineKeyboardButton(
+        "✅ Я оплатил",
+        callback_data=f"check_{amount}"
+    ))
 
-# --- подтверждение админом ---
+    bot.send_message(message.chat.id, "После оплаты нажмите:", reply_markup=kb2)
+
+# --- проверка ---
+@bot.callback_query_handler(func=lambda c: c.data.startswith("check_"))
+def check(call):
+    for admin in ADMIN_IDS:
+        kb = types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton(
+            "✅ Подтвердить",
+            callback_data=f"confirm_{call.from_user.id}"
+        ))
+
+        bot.send_message(
+            admin,
+            f"💰 Оплата от @{call.from_user.username}",
+            reply_markup=kb
+        )
+
+    bot.send_message(call.message.chat.id, "⏳ Ожидайте подтверждение")
+
+# --- подтверждение ---
 @bot.callback_query_handler(func=lambda c: c.data.startswith("confirm_"))
 def confirm(call):
     user_id = int(call.data.split("_")[1])
-    amount = call.data.split("_")[2]
 
     bot.send_message(
         user_id,
-        f"✅ Оплата подтверждена!\n\n⭐ {amount} будет отправлено в течение 5 минут"
+        "✅ Оплата подтверждена!\n📦 Товар придет в течение 5 минут"
     )
-
-    bot.answer_callback_query(call.id, "Подтверждено")
 
 # --- назад ---
 @bot.message_handler(func=lambda m: m.text == "⬅️ Назад")
 def back(message):
-    bot.send_message(message.chat.id, "🔙 Главное меню", reply_markup=main_menu())
+    bot.send_message(message.chat.id, "🔙 Меню", reply_markup=main_menu())
 
-bot.polling()
+bot.polling(none_stop=True)
