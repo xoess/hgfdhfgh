@@ -1,11 +1,8 @@
 import telebot
 from telebot import types
-import requests
 import os
 
-# --- ENV ---
 TOKEN = os.getenv("BOT_TOKEN")
-CRYPTO_TOKEN = os.getenv("CRYPTO_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
 bot = telebot.TeleBot(TOKEN)
@@ -20,175 +17,136 @@ prices = {
     "300": 325
 }
 
-# --- ТВОИ КАРТИНКИ ---
-IMG_MAIN = "AgACAgIAAxkBAAFHfEJp414ILgFPZIHifeOyuZ91oeZisAACQBRrGwUTIEvx4itiwJkrVgEAAwIAA3MAAzsE"
+# --- картинки ---
+IMG_WELCOME = "AgACAgIAAxkBAAFHfEJp414ILgFPZIHifeOyuZ91oeZisAACQBRrGwUTIEvx4itiwJkrVgEAAwIAA3MAAzsE"
 IMG_PROFILE = "AgACAgIAAxkBAAFHfEhp414mwl9xrct8OAe7IlWYYm765AACQhRrGwUTIEuE_EUM3sPNPQEAAwIAA20AAzsE"
 IMG_STARS = "AgACAgIAAxkBAAFHfExp4143555vDfUCWXuQYf6ivlH8qAACQxRrGwUTIEvn6IWhnnNfXgEAAwIAA3kAAzsE"
 
-# --- меню ---
+# --- главное меню ---
 def main_menu():
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add("⭐ Купить звезды", "👤 Профиль")
-    markup.add("📦 Мои заказы")
-    return markup
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.add("👤 Профиль", "⭐ Купить звезды")
+    kb.add("⚙️ Настройки")
+    return kb
 
 # --- старт ---
 @bot.message_handler(commands=['start'])
 def start(message):
     bot.send_photo(
         message.chat.id,
-        IMG_MAIN,
-        caption=(
-            "💎 <b>STAR SHOP</b>\n\n"
-            "⚡ Быстрая покупка Telegram Stars\n"
-            "🔒 Безопасно • Мгновенно • Удобно\n\n"
-            "👇 Выберите действие"
-        ),
-        parse_mode="HTML",
+        IMG_WELCOME,
+        caption="👋 Добро пожаловать в AulShop!\nВыберите действие:",
         reply_markup=main_menu()
     )
 
 # --- профиль ---
 @bot.message_handler(func=lambda m: m.text == "👤 Профиль")
 def profile(message):
+    text = f"""
+👤 Ваш профиль:
+
+🆔 ID: {message.from_user.id}
+📛 Username: @{message.from_user.username if message.from_user.username else 'нет'}
+"""
+
     bot.send_photo(
         message.chat.id,
         IMG_PROFILE,
-        caption=(
-            "👤 <b>Ваш профиль</b>\n\n"
-            f"🆔 ID: <code>{message.from_user.id}</code>\n"
-            f"👤 Username: @{message.from_user.username or 'нет'}\n\n"
-            "💬 Статус: Клиент"
-        ),
-        parse_mode="HTML"
+        caption=text,
+        reply_markup=main_menu()
     )
 
-# --- заказы ---
-@bot.message_handler(func=lambda m: m.text == "📦 Мои заказы")
-def orders(message):
-    bot.send_message(message.chat.id, "📦 У вас пока нет заказов")
-
-# --- выбор пакета ---
+# --- выбор звезд ---
 @bot.message_handler(func=lambda m: m.text == "⭐ Купить звезды")
-def choose_package(message):
-    markup = types.InlineKeyboardMarkup()
+def stars(message):
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
 
-    for stars, price in prices.items():
-        markup.add(types.InlineKeyboardButton(
-            f"{stars} ⭐ — {price} ₽",
-            callback_data=f"buy_{stars}"
-        ))
+    for k, v in prices.items():
+        kb.add(f"{k} ⭐ — {v} ₽")
+
+    kb.add("⬅️ Назад")
 
     bot.send_photo(
         message.chat.id,
         IMG_STARS,
-        caption="⭐ <b>Выберите пакет</b>",
-        parse_mode="HTML",
-        reply_markup=markup
+        caption="⭐ Выберите пакет:",
+        reply_markup=kb
     )
 
-# --- выбор оплаты ---
-@bot.callback_query_handler(func=lambda c: c.data.startswith("buy_"))
-def choose_payment(call):
-    amount = call.data.split("_")[1]
-    price = prices[amount]
+# --- обработка покупки ---
+@bot.message_handler(func=lambda m: "⭐" in m.text)
+def buy(message):
+    try:
+        amount = message.text.split("⭐")[0].strip()
+        price = prices.get(amount)
 
-    markup = types.InlineKeyboardMarkup()
-    markup.add(
-        types.InlineKeyboardButton("💳 Карта / СБП", callback_data=f"yoo_{amount}")
-    )
-    markup.add(
-        types.InlineKeyboardButton("💎 Crypto", callback_data=f"crypto_{amount}")
-    )
+        if not price:
+            return
 
-    bot.send_message(
-        call.message.chat.id,
-        f"⭐ {amount} Stars\n💰 {price} ₽\n\nВыберите способ оплаты:",
-        reply_markup=markup
-    )
+        # кнопка оплаты
+        kb = types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton(
+            "💳 Оплатить (ЮMoney)",
+            url=f"https://yoomoney.ru/to/4100119516144115?amount={price}"
+        ))
 
-# --- ЮMoney ---
-def yoomoney_link(amount, user_id):
-    return (
-        "https://yoomoney.ru/quickpay/confirm.xml?"
-        f"receiver=4100119516144115&quickpay-form=shop"
-        f"&targets={amount}+stars&paymentType=AC"
-        f"&sum={amount}&label={user_id}"
-    )
+        bot.send_message(
+            message.chat.id,
+            f"💰 К оплате: {price} ₽\nВыберите способ:",
+            reply_markup=kb
+        )
 
-@bot.callback_query_handler(func=lambda c: c.data.startswith("yoo_"))
-def yoo_pay(call):
-    amount = call.data.split("_")[1]
-    price = prices[amount]
+        # кнопка "я оплатил"
+        kb2 = types.InlineKeyboardMarkup()
+        kb2.add(types.InlineKeyboardButton(
+            "✅ Я оплатил",
+            callback_data=f"check_{amount}"
+        ))
 
-    pay_url = yoomoney_link(price, call.from_user.id)
+        bot.send_message(
+            message.chat.id,
+            "После оплаты нажмите кнопку:",
+            reply_markup=kb2
+        )
 
-    kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("💳 Оплатить", url=pay_url))
-    kb.add(types.InlineKeyboardButton("✅ Я оплатил", callback_data="check"))
+    except:
+        bot.send_message(message.chat.id, "❌ Ошибка")
 
-    bot.send_message(call.message.chat.id, "💳 Оплата:", reply_markup=kb)
-
-# --- Crypto ---
-@bot.callback_query_handler(func=lambda c: c.data.startswith("crypto_"))
-def crypto_pay(call):
-    amount = call.data.split("_")[1]
-    price = prices[amount]
-
-    url = "https://pay.crypt.bot/api/createInvoice"
-    headers = {"Crypto-Pay-API-Token": CRYPTO_TOKEN}
-
-    data = {
-        "asset": "USDT",
-        "amount": price / 100,
-        "description": f"{amount} stars",
-        "payload": str(call.from_user.id)
-    }
-
-    r = requests.post(url, headers=headers, json=data).json()
-
-    if not r.get("ok"):
-        bot.send_message(call.message.chat.id, "❌ Ошибка")
-        return
-
-    pay_url = r["result"]["pay_url"]
-
-    kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("💎 Оплатить", url=pay_url))
-    kb.add(types.InlineKeyboardButton("✅ Я оплатил", callback_data="check"))
-
-    bot.send_message(call.message.chat.id, "💎 Оплата:", reply_markup=kb)
-
-# --- проверка ---
-@bot.callback_query_handler(func=lambda c: c.data == "check")
+# --- проверка оплаты ---
+@bot.callback_query_handler(func=lambda c: c.data.startswith("check_"))
 def check(call):
-    user_id = call.from_user.id
+    amount = call.data.split("_")[1]
 
     kb = types.InlineKeyboardMarkup()
     kb.add(types.InlineKeyboardButton(
         "✅ Подтвердить",
-        callback_data=f"accept_{user_id}"
+        callback_data=f"confirm_{call.from_user.id}_{amount}"
     ))
 
     bot.send_message(
         ADMIN_ID,
-        f"💰 Новый платёж от @{call.from_user.username}",
+        f"💰 Заявка на оплату\n\n👤 @{call.from_user.username}\n⭐ {amount}",
         reply_markup=kb
     )
 
-    bot.send_message(call.message.chat.id, "⏳ Проверка...")
+    bot.send_message(call.message.chat.id, "⏳ Ожидаем подтверждение...")
 
-# --- подтверждение ---
-@bot.callback_query_handler(func=lambda c: c.data.startswith("accept_"))
-def accept(call):
+# --- подтверждение админом ---
+@bot.callback_query_handler(func=lambda c: c.data.startswith("confirm_"))
+def confirm(call):
     user_id = int(call.data.split("_")[1])
+    amount = call.data.split("_")[2]
 
     bot.send_message(
         user_id,
-        "✅ Оплата подтверждена!\n📦 Товар придет в течение 5 минут."
+        f"✅ Оплата подтверждена!\n\n⭐ {amount} будет отправлено в течение 5 минут"
     )
 
-    bot.send_message(call.message.chat.id, "✔️ Готово")
+    bot.answer_callback_query(call.id, "Подтверждено")
 
-# --- запуск ---
-bot.infinity_polling()
+# --- назад ---
+@bot.message_handler(func=lambda m: m.text == "⬅️ Назад")
+def back(message):
+    bot.send_message(message.chat.id, "🔙 Главное меню", reply_markup=main_menu())
+
+bot.polling()
