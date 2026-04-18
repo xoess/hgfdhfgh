@@ -1,11 +1,12 @@
 import telebot
 from telebot import types
+import requests
 import os
 
 # --- настройки ---
 TOKEN = os.getenv("BOT_TOKEN")
+CRYPTO_TOKEN = os.getenv("CRYPTO_TOKEN")
 
-# добавь сюда админов
 ADMIN_IDS = [7315281700]
 
 bot = telebot.TeleBot(TOKEN)
@@ -41,7 +42,7 @@ def start(message):
         caption=(
             "👋 <b>Добро пожаловать в Aulshop!</b>\n\n"
             f"🆔 Ваш ID: <code>{message.from_user.id}</code>\n\n"
-            "Выберите действие ниже 👇"
+            "Выберите действие 👇"
         ),
         parse_mode="HTML",
         reply_markup=main_menu()
@@ -62,16 +63,10 @@ def profile(message):
         reply_markup=main_menu()
     )
 
-# --- настройки ---
-@bot.message_handler(func=lambda m: m.text == "⚙️ Настройки")
-def settings(message):
-    bot.send_message(message.chat.id, "⚙️ В разработке", reply_markup=main_menu())
-
 # --- выбор пакета ---
 @bot.message_handler(func=lambda m: m.text == "⭐ Купить звезды")
 def choose_stars(message):
     kb = types.InlineKeyboardMarkup()
-
     for stars, price in prices.items():
         kb.add(types.InlineKeyboardButton(
             f"{stars} ⭐ — {price} ₽",
@@ -93,57 +88,77 @@ def choose_payment(call):
     price = prices[amount]
 
     kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton(
-        "💳 Сбер / СБП",
-        callback_data=f"sber_{amount}"
-    ))
+    kb.add(types.InlineKeyboardButton("💳 Сбер / СБП", callback_data=f"sber_{amount}"))
+    kb.add(types.InlineKeyboardButton("💎 CryptoBot", callback_data=f"crypto_{amount}"))
 
     bot.edit_message_caption(
-        caption=(
-            f"⭐ <b>{amount} Stars</b>\n"
-            f"💰 {price} ₽\n\n"
-            "Выберите способ оплаты:"
-        ),
+        caption=f"⭐ <b>{amount} Stars</b>\n💰 {price} ₽\n\nВыберите оплату:",
         chat_id=call.message.chat.id,
         message_id=call.message.message_id,
         parse_mode="HTML",
         reply_markup=kb
     )
 
-# --- СБЕР ОПЛАТА ---
+# --- СБЕР ---
 @bot.callback_query_handler(func=lambda c: c.data.startswith("sber_"))
 def sber_pay(call):
     amount = call.data.split("_")[1]
     price = prices[amount]
 
-    # ⚠️ ВСТАВЬ СВОИ ДАННЫЕ
     CARD = "2200 1234 5678 9012"
     PHONE = "+79991234567"
 
     kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton(
-        "✅ Я оплатил",
-        callback_data=f"check_{amount}"
-    ))
+    kb.add(types.InlineKeyboardButton("✅ Я оплатил", callback_data=f"check_{amount}"))
 
     bot.send_message(
         call.message.chat.id,
         f"""
-💳 <b>Оплата через Сбер / СБП</b>
+💳 <b>Оплата Сбер / СБП</b>
 
 💰 Сумма: <b>{price} ₽</b>
 
-📱 СБП (по номеру):+79330270826
+📱 СБП:+79330270826
 
 💳 Карта:2202208225487652
 
-📌 После оплаты нажмите кнопку ниже
+После оплаты нажмите кнопку ниже
 """,
         parse_mode="HTML",
         reply_markup=kb
     )
 
-# --- пользователь нажал "я оплатил" ---
+# --- CRYPTOBOT ---
+@bot.callback_query_handler(func=lambda c: c.data.startswith("crypto_"))
+def crypto_pay(call):
+    amount = call.data.split("_")[1]
+    price = prices[amount]
+
+    url = "https://pay.crypt.bot/api/createInvoice"
+    headers = {"Crypto-Pay-API-Token": CRYPTO_TOKEN}
+
+    data = {
+        "asset": "USDT",
+        "amount": price / 100,
+        "description": f"{amount} stars",
+        "payload": str(call.from_user.id)
+    }
+
+    r = requests.post(url, headers=headers, json=data).json()
+
+    if not r.get("ok"):
+        bot.send_message(call.message.chat.id, "❌ Ошибка оплаты")
+        return
+
+    pay_url = r["result"]["pay_url"]
+
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton("💎 Оплатить", url=pay_url))
+    kb.add(types.InlineKeyboardButton("✅ Я оплатил", callback_data=f"check_{amount}"))
+
+    bot.send_message(call.message.chat.id, "💎 Оплата криптой:", reply_markup=kb)
+
+# --- проверка ---
 @bot.callback_query_handler(func=lambda c: c.data.startswith("check_"))
 def check(call):
     amount = call.data.split("_")[1]
@@ -157,25 +172,23 @@ def check(call):
     for admin in ADMIN_IDS:
         bot.send_message(
             admin,
-            f"💰 Заявка на оплату\n\n👤 @{call.from_user.username}\n🆔 {call.from_user.id}\n⭐ {amount}",
+            f"💰 Оплата\n👤 @{call.from_user.username}\n⭐ {amount}",
             reply_markup=kb
         )
 
-    bot.send_message(call.message.chat.id, "⏳ Ожидайте подтверждение...")
+    bot.send_message(call.message.chat.id, "⏳ Ждите подтверждение...")
 
-# --- админ подтверждает ---
+# --- подтверждение ---
 @bot.callback_query_handler(func=lambda c: c.data.startswith("confirm_"))
 def confirm(call):
-    parts = call.data.split("_")
-    user_id = int(parts[1])
-    amount = parts[2]
+    user_id, amount = call.data.split("_")[1:]
 
     bot.send_message(
-        user_id,
-        f"✅ Оплата подтверждена!\n⭐ {amount} будет отправлено в течение 5 минут"
+        int(user_id),
+        f"✅ Оплата подтверждена!\n⭐ {amount} придут в течение 5 минут"
     )
 
-    bot.answer_callback_query(call.id, "Подтверждено")
+    bot.answer_callback_query(call.id, "Готово")
 
 # --- запуск ---
 bot.infinity_polling(skip_pending=True)
