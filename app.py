@@ -20,9 +20,10 @@ prices = {
     "300": 325
 }
 
-# --- изображения ---
-IMG_MAIN = "https://i.imgur.com/8Km9tLL.jpg"
-IMG_PAY = "https://i.imgur.com/3ZQ3Z9Q.jpg"
+# --- ТВОИ КАРТИНКИ ---
+IMG_MAIN = "AgACAgIAAxkBAAFHfEJp414ILgFPZIHifeOyuZ91oeZisAACQBRrGwUTIEvx4itiwJkrVgEAAwIAA3MAAzsE"
+IMG_PROFILE = "AgACAgIAAxkBAAFHfEhp414mwl9xrct8OAe7IlWYYm765AACQhRrGwUTIEuE_EUM3sPNPQEAAwIAA20AAzsE"
+IMG_STARS = "AgACAgIAAxkBAAFHfExp4143555vDfUCWXuQYf6ivlH8qAACQxRrGwUTIEvn6IWhnnNfXgEAAwIAA3kAAzsE"
 
 # --- меню ---
 def main_menu():
@@ -50,9 +51,10 @@ def start(message):
 # --- профиль ---
 @bot.message_handler(func=lambda m: m.text == "👤 Профиль")
 def profile(message):
-    bot.send_message(
+    bot.send_photo(
         message.chat.id,
-        (
+        IMG_PROFILE,
+        caption=(
             "👤 <b>Ваш профиль</b>\n\n"
             f"🆔 ID: <code>{message.from_user.id}</code>\n"
             f"👤 Username: @{message.from_user.username or 'нет'}\n\n"
@@ -64,10 +66,7 @@ def profile(message):
 # --- заказы ---
 @bot.message_handler(func=lambda m: m.text == "📦 Мои заказы")
 def orders(message):
-    bot.send_message(
-        message.chat.id,
-        "📦 У вас пока нет заказов"
-    )
+    bot.send_message(message.chat.id, "📦 У вас пока нет заказов")
 
 # --- выбор пакета ---
 @bot.message_handler(func=lambda m: m.text == "⭐ Купить звезды")
@@ -80,9 +79,10 @@ def choose_package(message):
             callback_data=f"buy_{stars}"
         ))
 
-    bot.send_message(
+    bot.send_photo(
         message.chat.id,
-        "⭐ <b>Выберите пакет</b>\n\nДоступные варианты:",
+        IMG_STARS,
+        caption="⭐ <b>Выберите пакет</b>",
         parse_mode="HTML",
         reply_markup=markup
     )
@@ -101,15 +101,9 @@ def choose_payment(call):
         types.InlineKeyboardButton("💎 Crypto", callback_data=f"crypto_{amount}")
     )
 
-    bot.edit_message_text(
-        (
-            f"⭐ <b>{amount} Stars</b>\n"
-            f"💰 Цена: {price} ₽\n\n"
-            "Выберите способ оплаты:"
-        ),
+    bot.send_message(
         call.message.chat.id,
-        call.message.message_id,
-        parse_mode="HTML",
+        f"⭐ {amount} Stars\n💰 {price} ₽\n\nВыберите способ оплаты:",
         reply_markup=markup
     )
 
@@ -133,13 +127,7 @@ def yoo_pay(call):
     kb.add(types.InlineKeyboardButton("💳 Оплатить", url=pay_url))
     kb.add(types.InlineKeyboardButton("✅ Я оплатил", callback_data="check"))
 
-    bot.send_photo(
-        call.message.chat.id,
-        IMG_PAY,
-        caption="💳 <b>Оплата</b>\n\nНажмите кнопку ниже для оплаты",
-        parse_mode="HTML",
-        reply_markup=kb
-    )
+    bot.send_message(call.message.chat.id, "💳 Оплата:", reply_markup=kb)
 
 # --- Crypto ---
 @bot.callback_query_handler(func=lambda c: c.data.startswith("crypto_"))
@@ -149,6 +137,7 @@ def crypto_pay(call):
 
     url = "https://pay.crypt.bot/api/createInvoice"
     headers = {"Crypto-Pay-API-Token": CRYPTO_TOKEN}
+
     data = {
         "asset": "USDT",
         "amount": price / 100,
@@ -159,7 +148,7 @@ def crypto_pay(call):
     r = requests.post(url, headers=headers, json=data).json()
 
     if not r.get("ok"):
-        bot.send_message(call.message.chat.id, "❌ Ошибка оплаты")
+        bot.send_message(call.message.chat.id, "❌ Ошибка")
         return
 
     pay_url = r["result"]["pay_url"]
@@ -168,15 +157,9 @@ def crypto_pay(call):
     kb.add(types.InlineKeyboardButton("💎 Оплатить", url=pay_url))
     kb.add(types.InlineKeyboardButton("✅ Я оплатил", callback_data="check"))
 
-    bot.send_photo(
-        call.message.chat.id,
-        IMG_PAY,
-        caption="💎 <b>Крипто оплата</b>\n\nНажмите кнопку ниже",
-        parse_mode="HTML",
-        reply_markup=kb
-    )
+    bot.send_message(call.message.chat.id, "💎 Оплата:", reply_markup=kb)
 
-# --- пользователь нажал оплатил ---
+# --- проверка ---
 @bot.callback_query_handler(func=lambda c: c.data == "check")
 def check(call):
     user_id = call.from_user.id
@@ -193,21 +176,16 @@ def check(call):
         reply_markup=kb
     )
 
-    bot.send_message(
-        call.message.chat.id,
-        "⏳ <b>Проверяем оплату...</b>",
-        parse_mode="HTML"
-    )
+    bot.send_message(call.message.chat.id, "⏳ Проверка...")
 
-# --- админ подтверждает ---
+# --- подтверждение ---
 @bot.callback_query_handler(func=lambda c: c.data.startswith("accept_"))
 def accept(call):
     user_id = int(call.data.split("_")[1])
 
     bot.send_message(
         user_id,
-        "✅ <b>Оплата подтверждена!</b>\n📦 Товар придет в течение 5 минут.",
-        parse_mode="HTML"
+        "✅ Оплата подтверждена!\n📦 Товар придет в течение 5 минут."
     )
 
     bot.send_message(call.message.chat.id, "✔️ Готово")
