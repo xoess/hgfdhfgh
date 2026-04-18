@@ -142,5 +142,41 @@ def settings(message):
 @bot.message_handler(func=lambda m: m.text == "⬅️ Назад")
 def back(message):
     bot.send_message(message.chat.id, "🔙 Главное меню", reply_markup=main_menu())
+    @bot.message_handler(func=lambda m: "⭐" in m.text and "₽" in m.text)
+def process_buy(message):
+    try:
+        amount = message.text.split(" ")[0]
+        price = prices[amount]
+
+        url = "https://pay.crypt.bot/api/createInvoice"
+        headers = {"Crypto-Pay-API-Token": CRYPTO_TOKEN}
+
+        data = {
+            "asset": "USDT",
+            "amount": price / 100,
+            "description": f"{amount} stars",
+            "payload": str(message.from_user.id)
+        }
+
+        r = requests.post(url, headers=headers, json=data).json()
+
+        if not r.get("ok"):
+            bot.send_message(message.chat.id, "❌ Ошибка оплаты")
+            return
+
+        pay_url = r["result"]["pay_url"]
+
+        bot.send_message(
+            message.chat.id,
+            f"💳 Оплати:\n{pay_url}"
+        )
+
+        bot.send_message(
+            ADMIN_ID,
+            f"💰 Новый заказ {amount} ⭐ от @{message.from_user.username}"
+        )
+
+    except:
+        bot.send_message(message.chat.id, "Ошибка")
     
 bot.polling()
