@@ -1,13 +1,15 @@
 import telebot
 from telebot import types
 import sqlite3
+import requests
 import os
 
 TOKEN = os.getenv("BOT_TOKEN")
+CRYPTO_TOKEN = os.getenv("CRYPTO_TOKEN")
 
 bot = telebot.TeleBot(TOKEN)
 
-# 💥 ФИКС 409 ОШИБКИ
+# фикс 409
 bot.delete_webhook()
 
 # ===== БАЗА =====
@@ -29,9 +31,7 @@ ADMIN_IDS = [7315281700]
 prices = {
     "25": 35,
     "50": 75,
-    "100": 125,
-    "150": 175,
-    "200": 225
+    "100": 125
 }
 
 IMG_WELCOME = "https://imglink.cc/cdn/K3tbrvOvzl.jpg"
@@ -58,7 +58,7 @@ def is_banned(uid):
     return r and r[0] == 1
 
 # ===== МЕНЮ =====
-def main_menu():
+def menu():
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
     kb.add("⭐ Купить звезды", "👤 Профиль")
     return kb
@@ -78,7 +78,7 @@ def start(m):
         uid,
         IMG_WELCOME,
         caption=f"👋 Добро пожаловать в Aulshop!\n\n🆔 ID: {uid}\n⭐ Баланс: {get_balance(uid)}",
-        reply_markup=main_menu()
+        reply_markup=menu()
     )
 
 # ===== ПРОФИЛЬ =====
@@ -94,7 +94,7 @@ def profile(m):
         uid,
         IMG_PROFILE,
         caption=f"👤 Профиль\n\n🆔 {uid}\n⭐ Баланс: {get_balance(uid)}",
-        reply_markup=main_menu()
+        reply_markup=menu()
     )
 
 # ===== ПОКУПКА =====
@@ -107,50 +107,102 @@ def buy_menu(m):
 
     bot.send_photo(m.chat.id, IMG_STARS, caption="💰 Выберите пакет:", reply_markup=kb)
 
+# выбор способа оплаты
 @bot.callback_query_handler(func=lambda c: c.data.startswith("buy_"))
 def buy(c):
     amount = c.data.split("_")[1]
     price = prices[amount]
 
     kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton(f"⭐ Купить за {price}", callback_data=f"pay_{amount}"))
+    kb.add(types.InlineKeyboardButton("💳 Сбер", callback_data=f"sber_{amount}"))
+    kb.add(types.InlineKeyboardButton("💎 Crypto", callback_data=f"crypto_{amount}"))
+    kb.add(types.InlineKeyboardButton(f"⭐ Купить за {price}", callback_data=f"star_{amount}"))
 
     bot.edit_message_caption(
-        caption=f"{amount}⭐ = {price}₽",
+        caption=f"{amount}⭐ = {price}₽\n\nВыберите способ оплаты:",
         chat_id=c.message.chat.id,
         message_id=c.message.message_id,
         reply_markup=kb
     )
 
-@bot.callback_query_handler(func=lambda c: c.data.startswith("pay_"))
-def pay(c):
+# ===== ОПЛАТА ЗА ЗВЕЗДЫ =====
+@bot.callback_query_handler(func=lambda c: c.data.startswith("star_"))
+def pay_star(c):
     uid = c.from_user.id
     amount = c.data.split("_")[1]
     price = prices[amount]
 
-    bot.send_message(uid, f"💳 Переведи {price}₽ на Сбер\n\nПосле оплаты нажми /check")
+    if get_balance(uid) < price:
+        bot.answer_callback_query(c.id, "❌ Недостаточно звёзд")
+        return
 
-# ===== ПРОВЕРКА =====
-@bot.message_handler(commands=['check'])
-def check(m):
-    uid = m.from_user.id
+    update_balance(uid, -price)
+    bot.send_message(uid, f"✅ Куплено {amount}⭐")
+
+# ===== СБЕР =====
+@bot.callback_query_handler(func=lambda c: c.data.startswith("sber_"))
+def sber(c):
+    amount = c.data.split("_")[1]
+    price = prices[amount]
 
     kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("✅ Подтвердить", callback_data=f"confirm_{uid}"))
+    kb.add(types.InlineKeyboardButton("✅ Я оплатил", callback_data=f"check_{amount}"))
+
+    bot.send_message(
+        c.message.chat.id,
+        f"💳 Переведи {price}₽ на Сбер\n\nПосле оплаты нажми кнопку",
+        reply_markup=kb
+    )
+
+# ===== CRYPTO =====
+@bot.callback_query_handler(func=lambda c: c.data.startswith("crypto_"))
+def crypto(c):
+    amount = c.data.split("_")[1]
+    price = prices[amount]
+
+    try:
+        r = requests.post(
+            "https://pay.crypt.bot/api/createInvoice",
+            headers={"Crypto-Pay-API-Token": CRYPTO_TOKEN},
+            json={"asset": "USDT", "amount": price / 100}
+        ).json()
+
+        url = r["result"]["pay_url"]
+
+        kb = types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton("💎 Оплатить", url=url))
+        kb.add(types.InlineKeyboardButton("✅ Я оплатил", callback_data=f"check_{amount}"))
+
+        bot.send_message(c.message.chat.id, "💎 Оплата Crypto:", reply_markup=kb)
+
+    except:
+        bot.send_message(c.message.chat.id, "❌ Ошибка создания оплаты")
+
+# ===== ПРОВЕРКА ОПЛАТЫ =====
+@bot.callback_query_handler(func=lambda c: c.data.startswith("check_"))
+def check(c):
+    amount = c.data.split("_")[1]
+
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton(
+        "✅ Подтвердить",
+        callback_data=f"confirm_{c.from_user.id}_{amount}"
+    ))
 
     for admin in ADMIN_IDS:
-        bot.send_message(admin, f"💰 Оплата от {uid}", reply_markup=kb)
+        bot.send_message(admin, f"💰 Оплата от {c.from_user.id}", reply_markup=kb)
 
-    bot.send_message(uid, "⏳ Ожидай подтверждения")
+    bot.send_message(c.from_user.id, "⏳ Ожидайте подтверждения")
 
 # ===== ПОДТВЕРЖДЕНИЕ =====
 @bot.callback_query_handler(func=lambda c: c.data.startswith("confirm_"))
 def confirm(c):
-    uid = int(c.data.split("_")[1])
+    uid, amount = c.data.split("_")[1:]
+    uid = int(uid)
 
-    update_balance(uid, 100)
+    update_balance(uid, int(amount))
 
-    bot.send_message(uid, "✅ Оплата подтверждена\n⭐ Зачислено!")
+    bot.send_message(uid, f"✅ Оплата подтверждена\n⭐ Зачислено {amount}")
     bot.answer_callback_query(c.id, "Готово")
 
 # ===== АДМИН =====
