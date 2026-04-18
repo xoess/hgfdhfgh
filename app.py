@@ -1,19 +1,17 @@
 import telebot
 import requests
 import os
-import uuid
 from telebot import types
 
 # --- токены ---
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
-YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID")
-YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY")
+YOOMONEY_TOKEN = os.getenv("YOOMONEY_TOKEN")  # токен ЮMoney
 
 bot = telebot.TeleBot(TOKEN)
 
-# --- цены (рубли) ---
+# --- цены ---
 prices = {
     "25": 35,
     "50": 75,
@@ -23,7 +21,7 @@ prices = {
     "300": 325
 }
 
-# --- главное меню ---
+# --- меню ---
 def main_menu():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add("👤 Профиль", "⭐ Купить звезды")
@@ -35,7 +33,7 @@ def main_menu():
 def start(message):
     bot.send_message(
         message.chat.id,
-        "👋 Добро пожаловать!\nВыберите действие:",
+        "👋 Добро пожаловать!",
         reply_markup=main_menu()
     )
 
@@ -44,12 +42,12 @@ def start(message):
 def profile(message):
     bot.send_message(
         message.chat.id,
-        f"👤 Профиль\n\nID: {message.from_user.id}\n"
+        f"👤 ID: {message.from_user.id}\n"
         f"Username: @{message.from_user.username or 'нет'}",
         reply_markup=main_menu()
     )
 
-# --- меню покупки ---
+# --- покупка ---
 @bot.message_handler(func=lambda m: m.text == "⭐ Купить звезды")
 def buy_menu(message):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -66,29 +64,57 @@ def buy_menu(message):
 def back(message):
     bot.send_message(message.chat.id, "Главное меню", reply_markup=main_menu())
 
-# --- создание платежа ЮKassa ---
-def create_payment(amount_rub, user_id):
-    url = "https://api.yookassa.ru/v3/payments"
+# --- создание ссылки ЮMoney ---
+def create_payment(amount, user_id):
+    # ЮMoney quickpay (работает с картой и СБП)
+    receiver = "4100111111111111"  # ❗ сюда свой номер кошелька
 
-    headers = {
-        "Content-Type": "application/json",
-        "Idempotence-Key": str(uuid.uuid4())
+    url = "https://yoomoney.ru/quickpay/confirm.xml"
+
+    params = {
+        "receiver": receiver,
+        "quickpay-form": "shop",
+        "targets": f"Оплата {amount}₽ user {user_id}",
+        "paymentType": "AC",  # карта (и СБП автоматически)
+        "sum": amount,
+        "label": str(user_id)
     }
 
-    data = {
-        "amount": {
-            "value": str(amount_rub),
-            "currency": "RUB"
-        },
-        "confirmation": {
-            "type": "redirect",
-            "return_url": "https://t.me/your_bot_username"
-        },
-        "capture": True,
-        "description": f"{amount_rub} RUB | user {user_id}"
-    }
+    # формируем ссылку
+    link = url + "?" + "&".join([f"{k}={v}" for k, v in params.items()])
+    return link
 
-    r = requests.post(
-        url,
-        json=data,
-        headers
+# --- обработка выбора пакета ---
+@bot.message_handler(func=lambda m: True)
+def process_buy(message):
+    try:
+        text = message.text.strip()
+
+        if not text or not text.split()[0].isdigit():
+            return
+
+        amount = text.split()[0]
+
+        if amount not in prices:
+            return
+
+        price = prices[amount]
+
+        pay_url = create_payment(price, message.from_user.id)
+
+        bot.send_message(
+            message.chat.id,
+            f"💳 Оплати здесь (карта / СБП):\n{pay_url}"
+        )
+
+        bot.send_message(
+            ADMIN_ID,
+            f"💰 Новый заказ {amount} ⭐ от @{message.from_user.username}"
+        )
+
+    except Exception as e:
+        print(e)
+        bot.send_message(message.chat.id, "Ошибка")
+
+# --- запуск ---
+bot.infinity_polling()
