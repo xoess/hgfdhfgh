@@ -2,20 +2,17 @@ import telebot
 from telebot import types
 import requests
 import os
-import uuid
 
 # --- ENV ---
 TOKEN = os.getenv("BOT_TOKEN")
 CRYPTO_TOKEN = os.getenv("CRYPTO_TOKEN")
-SHOP_ID = os.getenv("YOOKASSA_SHOP_ID")
-SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
 bot = telebot.TeleBot(TOKEN)
 
 # --- цены ---
 prices = {
-    "25": 30,
+    "25": 35,
     "50": 75,
     "100": 125,
     "150": 175,
@@ -123,72 +120,74 @@ def crypto_pay(call):
     kb.add(types.InlineKeyboardButton("💎 Оплатить криптой", url=pay_url))
     kb.add(types.InlineKeyboardButton("✅ Я оплатил", callback_data="check"))
 
-    bot.send_message(
-        call.message.chat.id,
-        "Нажми кнопку для оплаты 👇",
-        reply_markup=kb
-    )
+    bot.send_message(call.message.chat.id, "Оплати и нажми кнопку 👇", reply_markup=kb)
 
-# --- ЮKassa ---
+# --- ЮMoney (готовый кошелек) ---
+def create_yoomoney_link(amount, user_id):
+    receiver = "4100119516144115"
+
+    url = "https://yoomoney.ru/quickpay/confirm.xml"
+
+    params = {
+        "receiver": receiver,
+        "quickpay-form": "shop",
+        "targets": f"{amount} stars",
+        "paymentType": "AC",
+        "sum": amount,
+        "label": str(user_id)
+    }
+
+    return url + "?" + "&".join([f"{k}={v}" for k, v in params.items()])
+
 @bot.callback_query_handler(func=lambda c: c.data.startswith("yoo_"))
-def yoo_pay(call):
+def yoomoney_pay(call):
     amount = call.data.split("_")[1]
     price = prices[amount]
 
-    url = "https://api.yookassa.ru/v3/payments"
-
-    headers = {
-        "Content-Type": "application/json",
-        "Idempotence-Key": str(uuid.uuid4())
-    }
-    data = {
-        "amount": {
-            "value": str(price),
-            "currency": "RUB"
-        },
-        "confirmation": {
-            "type": "redirect",
-            "return_url": "https://t.me/your_bot"
-        },
-        "capture": True,
-        "description": f"{amount} stars | user {call.from_user.id}"
-    }
-
-    r = requests.post(
-        url,
-        json=data,
-        headers=headers,
-        auth=(SHOP_ID, SECRET_KEY)
-    ).json()
-
-    if not r.get("confirmation"):
-        bot.send_message(call.message.chat.id, "❌ Ошибка ЮKassa")
-        return
-
-    pay_url = r["confirmation"]["confirmation_url"]
-
+    pay_url = create_yoomoney_link(price, call.from_user.id)
     kb = types.InlineKeyboardMarkup()
     kb.add(types.InlineKeyboardButton("💳 Оплатить картой / СБП", url=pay_url))
     kb.add(types.InlineKeyboardButton("✅ Я оплатил", callback_data="check"))
 
+    bot.send_message(call.message.chat.id, "Оплати и нажми кнопку 👇", reply_markup=kb)
+
+# --- пользователь нажал оплатил ---
+@bot.callback_query_handler(func=lambda c: c.data == "check")
+def check(call):
+    user_id = call.from_user.id
+    username = call.from_user.username
+
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton(
+        "✅ Подтвердить оплату",
+        callback_data=f"accept_{user_id}"
+    ))
+
     bot.send_message(
-        call.message.chat.id,
-        "Нажми кнопку для оплаты 👇",
+        ADMIN_ID,
+        f"💰 Пользователь @{username} (ID: {user_id}) оплатил?",
         reply_markup=kb
     )
 
-# --- подтверждение ---
-@bot.callback_query_handler(func=lambda c: c.data == "check")
-def check(call):
     bot.send_message(
-        ADMIN_ID,
-        f"💰 Пользователь @{call.from_user.username} (ID: {call.from_user.id}) нажал 'оплатил'"
+        call.message.chat.id,
+        "⏳ Ожидаем подтверждение администратора..."
+    )
+
+# --- админ подтверждает ---
+@bot.callback_query_handler(func=lambda c: c.data.startswith("accept_"))
+def accept_payment(call):
+    user_id = int(call.data.split("_")[1])
+
+    bot.send_message(
+        user_id,
+        "✅ Оплата подтверждена!\n📦 Товар придет в течение 5 минут."
     )
 
     bot.send_message(
         call.message.chat.id,
-        "⏳ Проверяем оплату..."
+        "✔️ Оплата подтверждена"
     )
 
 # --- запуск ---
-bot.polling(none_stop=True)
+bot.infinity_polling()
