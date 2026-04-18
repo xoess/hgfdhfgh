@@ -4,7 +4,7 @@ import requests
 import os
 import uuid
 
-# --- токены ---
+# --- ENV ---
 TOKEN = os.getenv("BOT_TOKEN")
 CRYPTO_TOKEN = os.getenv("CRYPTO_TOKEN")
 SHOP_ID = os.getenv("YOOKASSA_SHOP_ID")
@@ -23,7 +23,7 @@ prices = {
     "300": 325
 }
 
-# --- главное меню ---
+# --- меню ---
 def main_menu():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add(
@@ -119,9 +119,14 @@ def crypto_pay(call):
 
     pay_url = r["result"]["pay_url"]
 
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton("💎 Оплатить криптой", url=pay_url))
+    kb.add(types.InlineKeyboardButton("✅ Я оплатил", callback_data="check"))
+
     bot.send_message(
         call.message.chat.id,
-        f"💎 Оплати криптой:\n{pay_url}"
+        "Нажми кнопку для оплаты 👇",
+        reply_markup=kb
     )
 
 # --- ЮKassa ---
@@ -136,7 +141,6 @@ def yoo_pay(call):
         "Content-Type": "application/json",
         "Idempotence-Key": str(uuid.uuid4())
     }
-
     data = {
         "amount": {
             "value": str(price),
@@ -144,11 +148,12 @@ def yoo_pay(call):
         },
         "confirmation": {
             "type": "redirect",
-            "return_url": "https://t.me/hdhehehdhdBot"
+            "return_url": "https://t.me/your_bot"
         },
         "capture": True,
         "description": f"{amount} stars | user {call.from_user.id}"
     }
+
     r = requests.post(
         url,
         json=data,
@@ -162,9 +167,27 @@ def yoo_pay(call):
 
     pay_url = r["confirmation"]["confirmation_url"]
 
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton("💳 Оплатить картой / СБП", url=pay_url))
+    kb.add(types.InlineKeyboardButton("✅ Я оплатил", callback_data="check"))
+
     bot.send_message(
         call.message.chat.id,
-        f"💳 Оплати картой / СБП:\n{pay_url}"
+        "Нажми кнопку для оплаты 👇",
+        reply_markup=kb
+    )
+
+# --- подтверждение ---
+@bot.callback_query_handler(func=lambda c: c.data == "check")
+def check(call):
+    bot.send_message(
+        ADMIN_ID,
+        f"💰 Пользователь @{call.from_user.username} (ID: {call.from_user.id}) нажал 'оплатил'"
+    )
+
+    bot.send_message(
+        call.message.chat.id,
+        "⏳ Проверяем оплату..."
     )
 
 # --- запуск ---
