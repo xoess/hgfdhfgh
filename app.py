@@ -39,7 +39,7 @@ def backup_db():
             shutil.copy(DB_NAME, BACKUP_NAME)
         except:
             pass
-        time.sleep(60)  # каждые 60 сек
+        time.sleep(60)
 
 threading.Thread(target=backup_db, daemon=True).start()
 
@@ -60,7 +60,7 @@ IMG_STARS   = "https://imglink.cc/cdn/_RxgFRvwh9.jpg"
 
 REF_PERCENT = 10
 
-# ---------- DB функции ----------
+# ---------- DB ----------
 def add_user(uid, ref=None):
     cursor.execute("INSERT OR IGNORE INTO users (user_id, ref) VALUES (?, ?)", (uid, ref))
     conn.commit()
@@ -92,7 +92,10 @@ def give_ref_bonus(uid, amount):
 
     update_balance(ref_id, bonus)
 
-    bot.send_message(ref_id, f"💸 +{bonus} ⭐ (реферал 10%)")
+    try:
+        bot.send_message(ref_id, f"💸 +{bonus} ⭐ (реферал)")
+    except:
+        pass
 
 # ---------- МЕНЮ ----------
 def menu():
@@ -132,6 +135,9 @@ def start(m):
 def profile(m):
     uid = m.from_user.id
 
+    if is_banned(uid):
+        return bot.send_message(uid, "🚫 Вы заблокированы")
+
     bot.send_photo(
         uid,
         IMG_PROFILE,
@@ -142,24 +148,31 @@ def profile(m):
 @bot.message_handler(func=lambda m: m.text == "👥 Рефералы")
 def refs(m):
     uid = m.from_user.id
-    link = f"https://t.me/{bot.get_me().username}?start={uid}"
 
+    if is_banned(uid):
+        return bot.send_message(uid, "🚫 Вы заблокированы")
+
+    link = f"https://t.me/{bot.get_me().username}?start={uid}"
     bot.send_message(uid, f"🔗 {link}\n💸 10% с покупок")
 
 # ---------- ПОКУПКА ----------
 @bot.message_handler(func=lambda m: m.text == "⭐ Купить звезды")
 def buy_menu(m):
-    kb = types.InlineKeyboardMarkup()
+    uid = m.from_user.id
 
+    if is_banned(uid):
+        return bot.send_message(uid, "🚫 Вы заблокированы")
+
+    kb = types.InlineKeyboardMarkup()
     for s, p in prices.items():
         kb.add(types.InlineKeyboardButton(f"{s}⭐ — {p}₽", callback_data=f"buy_{s}"))
 
-    bot.send_photo(m.chat.id, IMG_STARS, caption="Выбор", reply_markup=kb)
-
-@bot.callback_query_handler(func=lambda c: c.data.startswith("buy_"))
+    bot.send_photo(uid, IMG_STARS, caption="Выберите пакет", reply_markup=kb)
+    @bot.callback_query_handler(func=lambda c: c.data.startswith("buy_"))
 def buy(c):
     amount = c.data.split("_")[1]
     price = prices[amount]
+
     kb = types.InlineKeyboardMarkup()
     kb.add(types.InlineKeyboardButton("💳 Сбер", callback_data=f"sber_{amount}"))
     kb.add(types.InlineKeyboardButton("💎 Crypto", callback_data=f"crypto_{amount}"))
@@ -204,22 +217,22 @@ def crypto(c):
     amount = c.data.split("_")[1]
     price = prices[amount]
 
-    r = requests.post(
-        "https://pay.crypt.bot/api/createInvoice",
-        headers={"Crypto-Pay-API-Token": CRYPTO_TOKEN},
-        json={"asset": "USDT", "amount": price / 100}
-    ).json()
+    try:
+        r = requests.post(
+            "https://pay.crypt.bot/api/createInvoice",
+            headers={"Crypto-Pay-API-Token": CRYPTO_TOKEN},
+            json={"asset": "USDT", "amount": price / 100}
+        ).json()
 
-    if not r.get("ok"):
-        return bot.send_message(c.message.chat.id, "Ошибка")
+        url = r["result"]["pay_url"]
 
-    url = r["result"]["pay_url"]
+        kb = types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton("💎 Оплатить", url=url))
+        kb.add(types.InlineKeyboardButton("✅ Я оплатил", callback_data=f"check_{amount}"))
 
-    kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("💎 Оплатить", url=url))
-    kb.add(types.InlineKeyboardButton("✅ Я оплатил", callback_data=f"check_{amount}"))
-
-    bot.send_message(c.message.chat.id, "Оплата", reply_markup=kb)
+        bot.send_message(c.message.chat.id, "Оплата", reply_markup=kb)
+    except:
+        bot.send_message(c.message.chat.id, "❌ Ошибка оплаты")
 
 # ---------- ПРОВЕРКА ----------
 @bot.callback_query_handler(func=lambda c: c.data.startswith("check_"))
@@ -235,7 +248,7 @@ def check(c):
     for admin in ADMIN_IDS:
         bot.send_message(admin, f"Оплата от {c.from_user.id}", reply_markup=kb)
 
-    bot.send_message(c.from_user.id, "⏳ Ожидание")
+    bot.send_message(c.from_user.id, "⏳ Ожидайте")
 
 # ---------- ПОДТВЕРЖДЕНИЕ ----------
 @bot.callback_query_handler(func=lambda c: c.data.startswith("confirm_"))
@@ -259,41 +272,59 @@ def admin(m):
     kb.add("➕ Выдать", "🚫 Бан")
     kb.add("✅ Разбан")
 
-    bot.send_message(m.chat.id, "Админ", reply_markup=kb)
+    bot.send_message(m.chat.id, "Админ панель", reply_markup=kb)
 
 @bot.message_handler(func=lambda m: m.text == "➕ Выдать")
 def give(m):
     if m.from_user.id not in ADMIN_IDS:
         return
 
-    msg = bot.send_message(m.chat.id, "ID СУММА")
+    msg = bot.send_message(m.chat.id, "Введите: ID СУММА")
     bot.register_next_step_handler(msg, process_give)
 
 def process_give(m):
-    uid, amount = map(int, m.text.split())
-    update_balance(uid, amount)
-    bot.send_message(uid, f"🎁 +{amount}⭐")
+    try:
+        uid, amount = map(int, m.text.split())
+        update_balance(uid, amount)
+        bot.send_message(uid, f"🎁 +{amount}⭐")
+        bot.send_message(m.chat.id, "✅ Готово")
+    except:
+        bot.send_message(m.chat.id, "❌ Ошибка")
 
 @bot.message_handler(func=lambda m: m.text == "🚫 Бан")
 def ban(m):
-    msg = bot.send_message(m.chat.id, "ID")
+    if m.from_user.id not in ADMIN_IDS:
+        return
+        msg = bot.send_message(m.chat.id, "Введите ID")
     bot.register_next_step_handler(msg, process_ban)
 
 def process_ban(m):
-    uid = int(m.text)
-    cursor.execute("UPDATE users SET banned=1 WHERE user_id=?", (uid,))
-    conn.commit()
-    bot.send_message(uid, "🚫 Вы заблокированы")
+    try:
+        uid = int(m.text)
+        cursor.execute("UPDATE users SET banned=1 WHERE user_id=?", (uid,))
+        conn.commit()
+        bot.send_message(uid, "🚫 Вы заблокированы")
+        bot.send_message(m.chat.id, "✅ Заблокирован")
+    except:
+        bot.send_message(m.chat.id, "❌ Ошибка")
 
 @bot.message_handler(func=lambda m: m.text == "✅ Разбан")
 def unban(m):
-    msg = bot.send_message(m.chat.id, "ID")
+    if m.from_user.id not in ADMIN_IDS:
+        return
+
+    msg = bot.send_message(m.chat.id, "Введите ID")
     bot.register_next_step_handler(msg, process_unban)
-    def process_unban(m):
-    uid = int(m.text)
-    cursor.execute("UPDATE users SET banned=0 WHERE user_id=?", (uid,))
-    conn.commit()
-    bot.send_message(uid, "✅ Разблокированы")
+
+def process_unban(m):
+    try:
+        uid = int(m.text)
+        cursor.execute("UPDATE users SET banned=0 WHERE user_id=?", (uid,))
+        conn.commit()
+        bot.send_message(uid, "✅ Разблокированы")
+        bot.send_message(m.chat.id, "✅ Готово")
+    except:
+        bot.send_message(m.chat.id, "❌ Ошибка")
 
 # ================= START =================
 bot.infinity_polling(skip_pending=True)
