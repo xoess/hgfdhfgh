@@ -7,9 +7,11 @@ import os
 TOKEN = os.getenv("BOT_TOKEN")
 CRYPTO_TOKEN = os.getenv("CRYPTO_TOKEN")
 
-bot = telebot.TeleBot(TOKEN)
+# 🔥 НОВОЕ — берём с хоста
+CARD_NUMBER = os.getenv("CARD_NUMBER") or "не указана"
+PHONE_NUMBER = os.getenv("PHONE_NUMBER") or "не указан"
 
-# фикс 409
+bot = telebot.TeleBot(TOKEN)
 bot.delete_webhook()
 
 # ===== БАЗА =====
@@ -29,9 +31,14 @@ conn.commit()
 ADMIN_IDS = [7315281700]
 
 prices = {
+    "10": 15,
     "25": 35,
     "50": 75,
-    "100": 125
+    "75": 95,
+    "100": 125,
+    "150": 175,
+    "200": 225,
+    "300": 330
 }
 
 IMG_WELCOME = "https://imglink.cc/cdn/K3tbrvOvzl.jpg"
@@ -107,7 +114,7 @@ def buy_menu(m):
 
     bot.send_photo(m.chat.id, IMG_STARS, caption="💰 Выберите пакет:", reply_markup=kb)
 
-# выбор способа оплаты
+# выбор способа
 @bot.callback_query_handler(func=lambda c: c.data.startswith("buy_"))
 def buy(c):
     amount = c.data.split("_")[1]
@@ -139,7 +146,7 @@ def pay_star(c):
     update_balance(uid, -price)
     bot.send_message(uid, f"✅ Куплено {amount}⭐")
 
-# ===== СБЕР =====
+# ===== СБЕР (ИСПОЛЬЗУЕТ ENV) =====
 @bot.callback_query_handler(func=lambda c: c.data.startswith("sber_"))
 def sber(c):
     amount = c.data.split("_")[1]
@@ -150,7 +157,11 @@ def sber(c):
 
     bot.send_message(
         c.message.chat.id,
-        f"💳 Переведи {price}₽ на Сбер\n\nПосле оплаты нажми кнопку",
+        f"💳 Оплата Сбер\n\n"
+        f"💳 Карта: {CARD_NUMBER}\n"
+        f"📱 Телефон: {PHONE_NUMBER}\n\n"
+        f"Сумма: {price}₽\n\n"
+        f"После оплаты нажми кнопку",
         reply_markup=kb
     )
 
@@ -178,7 +189,7 @@ def crypto(c):
     except:
         bot.send_message(c.message.chat.id, "❌ Ошибка создания оплаты")
 
-# ===== ПРОВЕРКА ОПЛАТЫ =====
+# ===== ПРОВЕРКА =====
 @bot.callback_query_handler(func=lambda c: c.data.startswith("check_"))
 def check(c):
     amount = c.data.split("_")[1]
