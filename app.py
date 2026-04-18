@@ -1,13 +1,11 @@
 import telebot
 from telebot import types
-import requests
 import os
 
-# --- ENV ---
+# --- настройки ---
 TOKEN = os.getenv("BOT_TOKEN")
-CRYPTO_TOKEN = os.getenv("CRYPTO_TOKEN")
 
-# два админа (можешь добавить ещё)
+# добавь сюда админов
 ADMIN_IDS = [7315281700]
 
 bot = telebot.TeleBot(TOKEN)
@@ -22,7 +20,7 @@ prices = {
     "300": 325
 }
 
-# --- картинки (твои, прямые ссылки) ---
+# --- картинки ---
 IMG_WELCOME = "https://imglink.cc/cdn/K3tbrvOvzl.jpg"
 IMG_PROFILE = "https://imglink.cc/cdn/OZmDy2H4iI.jpg"
 IMG_STARS   = "https://imglink.cc/cdn/_RxgFRvwh9.jpg"
@@ -40,7 +38,11 @@ def start(message):
     bot.send_photo(
         message.chat.id,
         IMG_WELCOME,
-        caption="💎 <b>STAR SHOP</b>\n\nВыберите действие:",
+        caption=(
+            "👋 <b>Добро пожаловать в Aulshop!</b>\n\n"
+            f"🆔 Ваш ID: <code>{message.from_user.id}</code>\n\n"
+            "Выберите действие ниже 👇"
+        ),
         parse_mode="HTML",
         reply_markup=main_menu()
     )
@@ -52,7 +54,7 @@ def profile(message):
         message.chat.id,
         IMG_PROFILE,
         caption=(
-            "👤 <b>Профиль</b>\n\n"
+            "👤 <b>Ваш профиль</b>\n\n"
             f"🆔 ID: <code>{message.from_user.id}</code>\n"
             f"👤 Username: @{message.from_user.username or 'нет'}"
         ),
@@ -67,7 +69,7 @@ def settings(message):
 
 # --- выбор пакета ---
 @bot.message_handler(func=lambda m: m.text == "⭐ Купить звезды")
-def choose_package(message):
+def choose_stars(message):
     kb = types.InlineKeyboardMarkup()
 
     for stars, price in prices.items():
@@ -91,67 +93,55 @@ def choose_payment(call):
     price = prices[amount]
 
     kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("💳 ЮMoney / СБП", callback_data=f"yoo_{amount}"))
-    kb.add(types.InlineKeyboardButton("💎 Crypto", callback_data=f"crypto_{amount}"))
+    kb.add(types.InlineKeyboardButton(
+        "💳 Сбер / СБП",
+        callback_data=f"sber_{amount}"
+    ))
 
     bot.edit_message_caption(
-        caption=f"⭐ <b>{amount} Stars</b>\n💰 {price} ₽\n\nВыберите способ оплаты:",
+        caption=(
+            f"⭐ <b>{amount} Stars</b>\n"
+            f"💰 {price} ₽\n\n"
+            "Выберите способ оплаты:"
+        ),
         chat_id=call.message.chat.id,
         message_id=call.message.message_id,
         parse_mode="HTML",
         reply_markup=kb
     )
 
-# --- ЮMoney ---
-def yoomoney_link(amount, user_id):
-    return (
-        "https://yoomoney.ru/quickpay/confirm.xml?"
-        f"receiver=4100119516144115&quickpay-form=shop"
-        f"&targets={amount}+stars&paymentType=AC"
-        f"&sum={amount}&label={user_id}"
+# --- СБЕР ОПЛАТА ---
+@bot.callback_query_handler(func=lambda c: c.data.startswith("sber_"))
+def sber_pay(call):
+    amount = call.data.split("_")[1]
+    price = prices[amount]
+
+    # ⚠️ ВСТАВЬ СВОИ ДАННЫЕ
+    CARD = "2200 1234 5678 9012"
+    PHONE = "+79991234567"
+
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton(
+        "✅ Я оплатил",
+        callback_data=f"check_{amount}"
+    ))
+
+    bot.send_message(
+        call.message.chat.id,
+        f"""
+💳 <b>Оплата через Сбер / СБП</b>
+
+💰 Сумма: <b>{price} ₽</b>
+
+📱 СБП (по номеру):+79330270826
+
+💳 Карта:2202208225487652
+
+📌 После оплаты нажмите кнопку ниже
+""",
+        parse_mode="HTML",
+        reply_markup=kb
     )
-
-@bot.callback_query_handler(func=lambda c: c.data.startswith("yoo_"))
-def yoo_pay(call):
-    amount = call.data.split("_")[1]
-    price = prices[amount]
-
-    pay_url = yoomoney_link(price, call.from_user.id)
-
-    kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("💳 Оплатить", url=pay_url))
-    kb.add(types.InlineKeyboardButton("✅ Я оплатил", callback_data=f"check_{amount}"))
-
-    bot.send_message(call.message.chat.id, "💳 Оплата:", reply_markup=kb)
-
-# --- Crypto ---
-@bot.callback_query_handler(func=lambda c: c.data.startswith("crypto_"))
-def crypto_pay(call):
-    amount = call.data.split("_")[1]
-    price = prices[amount]
-
-    url = "https://pay.crypt.bot/api/createInvoice"
-    headers = {"Crypto-Pay-API-Token": CRYPTO_TOKEN}
-
-    data = {
-        "asset": "USDT",
-        "amount": price / 100,
-        "description": f"{amount} stars",
-        "payload": str(call.from_user.id)
-    }
-
-    r = requests.post(url, headers=headers, json=data).json()
-    if not r.get("ok"):
-        bot.send_message(call.message.chat.id, "❌ Ошибка создания оплаты")
-        return
-
-    pay_url = r["result"]["pay_url"]
-
-    kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("💎 Оплатить", url=pay_url))
-    kb.add(types.InlineKeyboardButton("✅ Я оплатил", callback_data=f"check_{amount}"))
-
-    bot.send_message(call.message.chat.id, "💎 Крипто оплата:", reply_markup=kb)
 
 # --- пользователь нажал "я оплатил" ---
 @bot.callback_query_handler(func=lambda c: c.data.startswith("check_"))
@@ -167,7 +157,7 @@ def check(call):
     for admin in ADMIN_IDS:
         bot.send_message(
             admin,
-            f"💰 Заявка\n👤 @{call.from_user.username}\n⭐ {amount}",
+            f"💰 Заявка на оплату\n\n👤 @{call.from_user.username}\n🆔 {call.from_user.id}\n⭐ {amount}",
             reply_markup=kb
         )
 
@@ -185,7 +175,7 @@ def confirm(call):
         f"✅ Оплата подтверждена!\n⭐ {amount} будет отправлено в течение 5 минут"
     )
 
-    bot.answer_callback_query(call.id, "Готово")
+    bot.answer_callback_query(call.id, "Подтверждено")
 
 # --- запуск ---
-bot.infinity_polling()
+bot.infinity_polling(skip_pending=True)
