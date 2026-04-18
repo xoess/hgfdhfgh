@@ -1,7 +1,6 @@
 
-    import telebot
+import telebot
 import requests
-
 import os
 
 TOKEN = os.getenv("BOT_TOKEN")
