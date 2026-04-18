@@ -2,9 +2,12 @@
     import telebot
 import requests
 
-TOKEN = "8570414257:AAHB05ZpnR1l_AiL5eTDQNLDW6_mRY5gAlg"
-CRYPTO_TOKEN = "569282:AAopvvBU0h57hJFPSoaDWBbAomYA6QAgJwW"
-ADMIN_ID = 7315281700
+import os
+
+TOKEN = os.getenv("BOT_TOKEN")
+CRYPTO_TOKEN = os.getenv("CRYPTO_TOKEN")
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
+
 
 bot = telebot.TeleBot(TOKEN)
 
