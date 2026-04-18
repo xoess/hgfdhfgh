@@ -20,15 +20,6 @@ prices = {
 }
 
 # --- старт ---
-@bot.message_handler(commands=['start'])
-def start(msg):
-    kb = telebot.types.InlineKeyboardMarkup()
-    for k, v in prices.items():
-        kb.add(telebot.types.InlineKeyboardButton(
-            f"⭐ {k} — {v}₽",
-            callback_data=f"buy_{k}"
-        ))
-    bot.send_message(msg.chat.id, "💫 Выбери пакет:", reply_markup=kb)
 
 # --- покупка ---
 @bot.callback_query_handler(func=lambda c: c.data.startswith("buy_"))
