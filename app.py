@@ -115,7 +115,7 @@ def start(m):
         reply_markup=menu()
     )
 
-# ===== ПРОФИЛЬ (ИСПРАВЛЕНО) =====
+# ===== ПРОФИЛЬ =====
 @bot.message_handler(func=lambda m: m.text == "👤 Профиль")
 def profile(m):
     uid = m.from_user.id
@@ -127,17 +127,10 @@ def profile(m):
     cursor.execute("SELECT user_id FROM refs WHERE ref_id=?", (uid,))
     refs = cursor.fetchall()
 
-    ref_count = len(refs)
-
     bot.send_photo(
         uid,
         IMG_PROFILE,
-        caption=(
-            f"👤 Профиль\n\n"
-            f"🆔 ID: {uid}\n"
-            f"⭐ Баланс: {get_balance(uid)}\n"
-            f"👥 Рефералов: {ref_count}"
-        )
+        caption=f"👤 Профиль\n\n🆔 ID: {uid}\n⭐ Баланс: {get_balance(uid)}\n👥 Рефералов: {len(refs)}"
     )
 
 # ===== РЕФЕРАЛЫ =====
@@ -177,6 +170,7 @@ def buy(c):
     kb = types.InlineKeyboardMarkup()
     kb.add(types.InlineKeyboardButton("💳 Сбер", callback_data=f"sber_{amount}"))
     kb.add(types.InlineKeyboardButton("💎 Crypto", callback_data=f"crypto_{amount}"))
+    kb.add(types.InlineKeyboardButton(f"⭐ Купить за {price}", callback_data=f"star_{amount}"))
 
     bot.edit_message_caption(
         caption=f"{amount}⭐ = {price}₽",
@@ -200,6 +194,44 @@ def sber(c):
         reply_markup=kb
     )
 
+# ===== CRYPTO =====
+@bot.callback_query_handler(func=lambda c: c.data.startswith("crypto_"))
+def crypto(c):
+    amount = c.data.split("_")[1]
+    price = prices[amount]
+
+    try:
+        r = requests.post(
+            "https://pay.crypt.bot/api/createInvoice",
+            headers={"Crypto-Pay-API-Token": CRYPTO_TOKEN},
+            json={"asset": "USDT", "amount": price / 100}
+        ).json()
+
+        url = r["result"]["pay_url"]
+
+        kb = types.InlineKeyboardMarkup()
+        kb.add(types.InlineKeyboardButton("💎 Оплатить", url=url))
+        kb.add(types.InlineKeyboardButton("✅ Я оплатил", callback_data=f"check_{amount}"))
+
+        bot.send_message(c.message.chat.id, "💎 Оплата Crypto:", reply_markup=kb)
+
+    except:
+        bot.send_message(c.message.chat.id, "❌ Ошибка")
+
+# ===== ОПЛАТА ЗВЕЗДАМИ =====
+@bot.callback_query_handler(func=lambda c: c.data.startswith("star_"))
+def pay_star(c):
+    uid = c.from_user.id
+    amount = c.data.split("_")[1]
+    price = prices[amount]
+
+    if get_balance(uid) < price:
+        bot.answer_callback_query(c.id, "❌ Недостаточно")
+        return
+
+    update_balance(uid, -price)
+    bot.send_message(uid, f"✅ Куплено {amount}⭐")
+
 # ===== ПРОВЕРКА =====
 @bot.callback_query_handler(func=lambda c: c.data.startswith("check_"))
 def check(c):
@@ -217,37 +249,42 @@ def check(c):
     for admin in ADMIN_IDS:
         bot.send_message(
             admin,
-            f"💰 Оплата\n\n👤 {username}\n🆔 {user.id}\n⭐ {amount}",
+            f"💰 Новая оплата\n\n👤 {username}\n🆔 {user.id}\n⭐ {amount}",
             reply_markup=kb
         )
 
     bot.send_message(user.id, "⏳ Ожидайте подтверждения")
 
-# ===== ПОДТВЕРЖДЕНИЕ =====
+# ===== ПОДТВЕРЖДЕНИЕ (СООБЩЕНИЕ "ОЖИДАЙТЕ") =====
 @bot.callback_query_handler(func=lambda c: c.data.startswith("confirm_"))
 def confirm(c):
     uid, amount = c.data.split("_")[1:]
     uid = int(uid)
     amount = int(amount)
 
+    bot.send_message(
+        uid,
+        f"✅ Оплата подтверждена!\n\n⭐ {amount} Stars\n⏳ Ожидайте выдачи администратором"
+    )
+
     kb = types.InlineKeyboardMarkup()
     kb.add(types.InlineKeyboardButton("✅ Выдал", callback_data=f"done_{uid}_{amount}"))
 
     bot.edit_message_text(
-        f"📦 Заказ\n\n👤 ID: {uid}\n⭐ {amount}\n\nНажми после выдачи",
+        f"📦 Заказ\n\n👤 ID: {uid}\n⭐ {amount}\n\nПосле выдачи нажми кнопку",
         c.message.chat.id,
         c.message.message_id,
         reply_markup=kb
     )
 
-# ===== ВЫДАЛ =====
+# ===== ВЫДАЧА =====
 @bot.callback_query_handler(func=lambda c: c.data.startswith("done_"))
 def done(c):
     uid, amount = c.data.split("_")[1:]
     uid = int(uid)
     amount = int(amount)
 
-    bot.send_message(uid, f"✅ Вам выдано {amount} Telegram Stars!")
+    bot.send_message(uid, f"🎉 Вам выдано {amount} Telegram Stars!")
 
     ref = get_ref(uid)
     if ref:
@@ -257,5 +294,61 @@ def done(c):
 
     bot.answer_callback_query(c.id, "Готово")
 
-# ===== СТАРТ =====
+# ===== АДМИНКА =====
+@bot.message_handler(commands=['admin'])
+def admin(m):
+    if m.from_user.id not in ADMIN_IDS:
+        return
+
+    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.add("➕ Выдать", "🚫 Бан", "✅ Разбан")
+
+    bot.send_message(m.chat.id, "⚙ Админ панель", reply_markup=kb)
+
+@bot.message_handler(func=lambda m: m.text == "➕ Выдать")
+def give(m):
+    if m.from_user.id not in ADMIN_IDS:
+        return
+
+    msg = bot.send_message(m.chat.id, "Введите: ID СУММА")
+    bot.register_next_step_handler(msg, process_give)
+
+def process_give(m):
+    try:
+        uid, amount = map(int, m.text.split())
+        update_balance(uid, amount)
+        bot.send_message(uid, f"🎁 Выдано {amount}⭐")
+        bot.send_message(m.chat.id, "✅ Готово")
+    except:
+        bot.send_message(m.chat.id, "❌ Ошибка")
+
+@bot.message_handler(func=lambda m: m.text == "🚫 Бан")
+def ban(m):
+    msg = bot.send_message(m.chat.id, "Введите ID")
+    bot.register_next_step_handler(msg, process_ban)
+
+def process_ban(m):
+    try:
+        uid = int(m.text)
+        cursor.execute("UPDATE users SET banned=1 WHERE user_id=?", (uid,))
+        conn.commit()
+        bot.send_message(uid, "🚫 Вы заблокированы")
+    except:
+        bot.send_message(m.chat.id, "❌ Ошибка")
+
+@bot.message_handler(func=lambda m: m.text == "✅ Разбан")
+def unban(m):
+    msg = bot.send_message(m.chat.id, "Введите ID")
+    bot.register_next_step_handler(msg, process_unban)
+
+def process_unban(m):
+    try:
+        uid = int(m.text)
+        cursor.execute("UPDATE users SET banned=0 WHERE user_id=?", (uid,))
+        conn.commit()
+        bot.send_message(uid, "✅ Вы разблокированы")
+    except:
+        bot.send_message(m.chat.id, "❌ Ошибка")
+
+# ===== ЗАПУСК =====
 bot.infinity_polling(skip_pending=True)
