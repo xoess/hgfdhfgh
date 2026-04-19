@@ -33,6 +33,15 @@ CREATE TABLE IF NOT EXISTS refs (
 )
 """)
 
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS orders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    amount INTEGER,
+    status TEXT
+)
+""")
+
 conn.commit()
 
 # ===== НАСТРОЙКИ =====
@@ -81,6 +90,15 @@ def is_banned(uid):
     r = cursor.fetchone()
     return r and r[0] == 1
 
+def has_active_order(uid):
+    cursor.execute("SELECT * FROM orders WHERE user_id=? AND status!='done'", (uid,))
+    return cursor.fetchone() is not None
+
+def create_order(uid, amount):
+    cursor.execute("INSERT INTO orders (user_id, amount, status) VALUES (?, ?, 'pending')", (uid, amount))
+    conn.commit()
+    return cursor.lastrowid
+
 # ===== МЕНЮ =====
 def menu():
     kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -108,49 +126,20 @@ def start(m):
 
     add_user(uid, ref)
 
-    bot.send_photo(
-        uid,
-        IMG_WELCOME,
-        caption=f"👋 Добро пожаловать в Aulshop!\n\n🆔 ID: {uid}\n⭐ Баланс: {get_balance(uid)}",
-        reply_markup=menu()
-    )
+    bot.send_photo(uid, IMG_WELCOME,
+                   caption=f"👋 Добро пожаловать в Aulshop!\n🆔 {uid}",
+                   reply_markup=menu())
 
 # ===== ПРОФИЛЬ =====
 @bot.message_handler(func=lambda m: m.text == "👤 Профиль")
 def profile(m):
     uid = m.from_user.id
 
-    if is_banned(uid):
-        bot.send_message(uid, "🚫 Вы заблокированы")
-        return
-
     cursor.execute("SELECT user_id FROM refs WHERE ref_id=?", (uid,))
     refs = cursor.fetchall()
 
-    bot.send_photo(
-        uid,
-        IMG_PROFILE,
-        caption=f"👤 Профиль\n\n🆔 ID: {uid}\n⭐ Баланс: {get_balance(uid)}\n👥 Рефералов: {len(refs)}"
-    )
-
-# ===== РЕФЕРАЛЫ =====
-@bot.message_handler(func=lambda m: m.text == "👥 Рефералы")
-def refs(m):
-    uid = m.from_user.id
-    link = f"https://t.me/{bot.get_me().username}?start={uid}"
-
-    cursor.execute("SELECT user_id FROM refs WHERE ref_id=?", (uid,))
-    users = cursor.fetchall()
-
-    text = f"👥 Твоя ссылка:\n{link}\n\n📊 Рефералы:\n"
-
-    if not users:
-        text += "❌ Нет"
-    else:
-        for u in users:
-            text += f"👤 ID: {u[0]}\n"
-
-    bot.send_message(uid, text)
+    bot.send_photo(uid, IMG_PROFILE,
+                   caption=f"👤 Профиль\n\n🆔 {uid}\n⭐ {get_balance(uid)}\n👥 {len(refs)}")
 
 # ===== ПОКУПКА =====
 @bot.message_handler(func=lambda m: m.text == "⭐ Купить звезды")
@@ -159,21 +148,27 @@ def buy_menu(m):
     for s, p in prices.items():
         kb.add(types.InlineKeyboardButton(f"{s}⭐ — {p}₽", callback_data=f"buy_{s}"))
 
-    bot.send_photo(m.chat.id, IMG_STARS, caption="💰 Выберите пакет:", reply_markup=kb)
+    bot.send_photo(m.chat.id, IMG_STARS, caption="Выбери пакет", reply_markup=kb)
 
 # ===== ВЫБОР =====
 @bot.callback_query_handler(func=lambda c: c.data.startswith("buy_"))
 def buy(c):
-    amount = c.data.split("_")[1]
-    price = prices[amount]
+    uid = c.from_user.id
+    amount = int(c.data.split("_")[1])
+
+    if has_active_order(uid):
+        bot.answer_callback_query(c.id, "❌ У тебя есть активный заказ")
+        return
+
+    order_id = create_order(uid, amount)
+    price = prices[str(amount)]
 
     kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("💳 Сбер", callback_data=f"sber_{amount}"))
-    kb.add(types.InlineKeyboardButton("💎 Crypto", callback_data=f"crypto_{amount}"))
-    kb.add(types.InlineKeyboardButton(f"⭐ Купить за {price}", callback_data=f"star_{amount}"))
+    kb.add(types.InlineKeyboardButton("💳 Сбер", callback_data=f"sber_{order_id}"))
+    kb.add(types.InlineKeyboardButton("💎 Crypto", callback_data=f"crypto_{order_id}"))
 
     bot.edit_message_caption(
-        caption=f"{amount}⭐ = {price}₽",
+        caption=f"📦 Заказ #{order_id}\n⭐ {amount} = {price}₽",
         chat_id=c.message.chat.id,
         message_id=c.message.message_id,
         reply_markup=kb
@@ -182,96 +177,76 @@ def buy(c):
 # ===== СБЕР =====
 @bot.callback_query_handler(func=lambda c: c.data.startswith("sber_"))
 def sber(c):
-    amount = c.data.split("_")[1]
-    price = prices[amount]
+    order_id = int(c.data.split("_")[1])
+
+    cursor.execute("SELECT amount FROM orders WHERE id=?", (order_id,))
+    amount = cursor.fetchone()[0]
+    price = prices[str(amount)]
 
     kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("✅ Я оплатил", callback_data=f"check_{amount}"))
+    kb.add(types.InlineKeyboardButton("✅ Я оплатил", callback_data=f"check_{order_id}"))
 
-    bot.send_message(
-        c.message.chat.id,
-        f"💳 Карта: {CARD_NUMBER}\n📱 Телефон: {PHONE_NUMBER}\n\nСумма: {price}₽",
-        reply_markup=kb
-    )
+    bot.send_message(c.message.chat.id,
+                     f"📦 #{order_id}\n💳 {CARD_NUMBER}\n📱 {PHONE_NUMBER}\n💰 {price}₽",
+                     reply_markup=kb)
 
-# ===== CRYPTO =====
+# ===== CRYPTO (БЕЗ АВТО ПРОВЕРКИ) =====
 @bot.callback_query_handler(func=lambda c: c.data.startswith("crypto_"))
 def crypto(c):
-    amount = c.data.split("_")[1]
-    price = prices[amount]
+    order_id = int(c.data.split("_")[1])
 
-    try:
-        r = requests.post(
-            "https://pay.crypt.bot/api/createInvoice",
-            headers={"Crypto-Pay-API-Token": CRYPTO_TOKEN},
-            json={"asset": "USDT", "amount": price / 100}
-        ).json()
+    cursor.execute("SELECT amount FROM orders WHERE id=?", (order_id,))
+    amount = cursor.fetchone()[0]
+    price = prices[str(amount)]
 
-        url = r["result"]["pay_url"]
+    r = requests.post(
+        "https://pay.crypt.bot/api/createInvoice",
+        headers={"Crypto-Pay-API-Token": CRYPTO_TOKEN},
+        json={"asset": "USDT", "amount": price / 100}
+    ).json()
 
-        kb = types.InlineKeyboardMarkup()
-        kb.add(types.InlineKeyboardButton("💎 Оплатить", url=url))
-        kb.add(types.InlineKeyboardButton("✅ Я оплатил", callback_data=f"check_{amount}"))
+    url = r["result"]["pay_url"]
 
-        bot.send_message(c.message.chat.id, "💎 Оплата Crypto:", reply_markup=kb)
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton("💎 Оплатить", url=url))
+    kb.add(types.InlineKeyboardButton("✅ Я оплатил", callback_data=f"check_{order_id}"))
 
-    except:
-        bot.send_message(c.message.chat.id, "❌ Ошибка")
+    bot.send_message(c.message.chat.id,
+                     f"📦 #{order_id}\nПосле оплаты нажми кнопку",
+                     reply_markup=kb)
 
-# ===== ОПЛАТА ЗВЕЗДАМИ =====
-@bot.callback_query_handler(func=lambda c: c.data.startswith("star_"))
-def pay_star(c):
-    uid = c.from_user.id
-    amount = c.data.split("_")[1]
-    price = prices[amount]
-
-    if get_balance(uid) < price:
-        bot.answer_callback_query(c.id, "❌ Недостаточно")
-        return
-
-    update_balance(uid, -price)
-    bot.send_message(uid, f"✅ Куплено {amount}⭐")
-
-# ===== ПРОВЕРКА =====
+# ===== Я ОПЛАТИЛ =====
 @bot.callback_query_handler(func=lambda c: c.data.startswith("check_"))
 def check(c):
-    amount = c.data.split("_")[1]
+    order_id = int(c.data.split("_")[1])
 
-    user = c.from_user
-    username = f"@{user.username}" if user.username else "нет username"
+    cursor.execute("SELECT user_id FROM orders WHERE id=?", (order_id,))
+    uid = cursor.fetchone()[0]
 
     kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton(
-        "✅ Подтвердить",
-        callback_data=f"confirm_{user.id}_{amount}"
-    ))
+    kb.add(types.InlineKeyboardButton("✅ Подтвердить", callback_data=f"confirm_{order_id}"))
 
     for admin in ADMIN_IDS:
-        bot.send_message(
-            admin,
-            f"💰 Новая оплата\n\n👤 {username}\n🆔 {user.id}\n⭐ {amount}",
-            reply_markup=kb
-        )
+        bot.send_message(admin, f"💰 Заказ #{order_id}\n👤 {uid}", reply_markup=kb)
 
-    bot.send_message(user.id, "⏳ Ожидайте подтверждения")
-
-# ===== ПОДТВЕРЖДЕНИЕ (СООБЩЕНИЕ "ОЖИДАЙТЕ") =====
+# ===== ПОДТВЕРЖДЕНИЕ =====
 @bot.callback_query_handler(func=lambda c: c.data.startswith("confirm_"))
 def confirm(c):
-    uid, amount = c.data.split("_")[1:]
-    uid = int(uid)
-    amount = int(amount)
+    order_id = int(c.data.split("_")[1])
 
-    bot.send_message(
-        uid,
-        f"✅ Оплата подтверждена!\n\n⭐ {amount} Stars\n⏳ Ожидайте выдачи администратором"
-    )
+    cursor.execute("SELECT user_id, amount FROM orders WHERE id=?", (order_id,))
+    uid, amount = cursor.fetchone()
+
+    cursor.execute("UPDATE orders SET status='confirmed' WHERE id=?", (order_id,))
+    conn.commit()
+
+    bot.send_message(uid, f"📦 #{order_id}\n⏳ В обработке")
 
     kb = types.InlineKeyboardMarkup()
-    kb.add(types.InlineKeyboardButton("✅ Выдал", callback_data=f"done_{uid}_{amount}"))
+    kb.add(types.InlineKeyboardButton("✅ Выдал", callback_data=f"done_{order_id}"))
 
     bot.edit_message_text(
-        f"📦 Заказ\n\n👤 ID: {uid}\n⭐ {amount}\n\nПосле выдачи нажми кнопку",
+        f"📦 #{order_id}\n👤 {uid}\n⭐ {amount}\n⏳ В обработке",
         c.message.chat.id,
         c.message.message_id,
         reply_markup=kb
@@ -280,75 +255,27 @@ def confirm(c):
 # ===== ВЫДАЧА =====
 @bot.callback_query_handler(func=lambda c: c.data.startswith("done_"))
 def done(c):
-    uid, amount = c.data.split("_")[1:]
-    uid = int(uid)
-    amount = int(amount)
+    order_id = int(c.data.split("_")[1])
 
-    bot.send_message(uid, f"🎉 Вам выдано {amount} Telegram Stars!")
+    cursor.execute("SELECT user_id, amount FROM orders WHERE id=?", (order_id,))
+    uid, amount = cursor.fetchone()
+
+    cursor.execute("UPDATE orders SET status='done' WHERE id=?", (order_id,))
+    conn.commit()
+
+    bot.send_message(uid, f"📦 #{order_id}\n✅ Выполнен")
 
     ref = get_ref(uid)
     if ref:
         bonus = int(amount * 0.10)
         update_balance(ref, bonus)
-        bot.send_message(ref, f"🎁 +{bonus}⭐ (10%)")
+        bot.send_message(ref, f"🎁 +{bonus}⭐")
 
-    bot.answer_callback_query(c.id, "Готово")
-
-# ===== АДМИНКА =====
-@bot.message_handler(commands=['admin'])
-def admin(m):
-    if m.from_user.id not in ADMIN_IDS:
-        return
-
-    kb = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.add("➕ Выдать", "🚫 Бан", "✅ Разбан")
-
-    bot.send_message(m.chat.id, "⚙ Админ панель", reply_markup=kb)
-
-@bot.message_handler(func=lambda m: m.text == "➕ Выдать")
-def give(m):
-    if m.from_user.id not in ADMIN_IDS:
-        return
-
-    msg = bot.send_message(m.chat.id, "Введите: ID СУММА")
-    bot.register_next_step_handler(msg, process_give)
-
-def process_give(m):
-    try:
-        uid, amount = map(int, m.text.split())
-        update_balance(uid, amount)
-        bot.send_message(uid, f"🎁 Выдано {amount}⭐")
-        bot.send_message(m.chat.id, "✅ Готово")
-    except:
-        bot.send_message(m.chat.id, "❌ Ошибка")
-
-@bot.message_handler(func=lambda m: m.text == "🚫 Бан")
-def ban(m):
-    msg = bot.send_message(m.chat.id, "Введите ID")
-    bot.register_next_step_handler(msg, process_ban)
-
-def process_ban(m):
-    try:
-        uid = int(m.text)
-        cursor.execute("UPDATE users SET banned=1 WHERE user_id=?", (uid,))
-        conn.commit()
-        bot.send_message(uid, "🚫 Вы заблокированы")
-    except:
-        bot.send_message(m.chat.id, "❌ Ошибка")
-
-@bot.message_handler(func=lambda m: m.text == "✅ Разбан")
-def unban(m):
-    msg = bot.send_message(m.chat.id, "Введите ID")
-    bot.register_next_step_handler(msg, process_unban)
-
-def process_unban(m):
-    try:
-        uid = int(m.text)
-        cursor.execute("UPDATE users SET banned=0 WHERE user_id=?", (uid,))
-        conn.commit()
-        bot.send_message(uid, "✅ Вы разблокированы")
-    except:
-        bot.send_message(m.chat.id, "❌ Ошибка")
+    bot.edit_message_text(
+        f"📦 #{order_id}\n👤 {uid}\n⭐ {amount}\n✅ Выполнен",
+        c.message.chat.id,
+        c.message.message_id
+    )
 
 # ===== ЗАПУСК =====
 bot.infinity_polling(skip_pending=True)
